@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f6f2">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="어제오늘">
+<title>어제오늘 날씨</title>
+<style>
+  :root{
+    --bg:#f7f6f2; --card:#ffffff; --text:#1f1f1d; --sub:#6b6a65; --line:#e4e2da;
+    --warm:#c2410c; --cold:#1d4ed8; --same:#4b5563; --note-bg:#fff7e6; --note:#8a5a00;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141413; --card:#1f1f1d; --text:#f2f1ec; --sub:#a3a29b; --line:#33332f;
+      --warm:#fb923c; --cold:#60a5fa; --same:#cbd5e1; --note-bg:#3a2e14; --note:#f5c86b; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+    word-break:keep-all; -webkit-text-size-adjust:100%}
+  main{max-width:460px;margin:0 auto;
+    padding:calc(env(safe-area-inset-top) + 20px) 20px calc(env(safe-area-inset-bottom) + 24px)}
+  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+  .place{font-size:15px;color:var(--sub)}
+  button{font:inherit;font-size:14px;color:var(--text);background:var(--card);
+    border:1px solid var(--line);border-radius:999px;padding:8px 14px;cursor:pointer}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px 20px;margin-bottom:14px}
+  .label{font-size:14px;color:var(--sub);margin:0 0 6px}
+  .head{font-size:28px;line-height:1.35;font-weight:700;margin:0 0 10px}
+  .head.small{font-size:22px}
+  .warm{color:var(--warm)} .cold{color:var(--cold)} .same{color:var(--same)}
+  .detail{font-size:15px;color:var(--sub);line-height:1.6;margin:0}
+  .note{background:var(--note-bg);color:var(--note);border-radius:12px;padding:10px 12px;
+    font-size:14px;line-height:1.5;margin-top:12px}
+  .msg{text-align:center;color:var(--sub);padding:48px 8px;line-height:1.7}
+  .foot{font-size:12px;color:var(--sub);text-align:center;margin-top:18px;line-height:1.6}
+  .foot a{color:var(--sub)}
+  .now{display:flex;align-items:center;gap:16px;padding:6px 4px 18px}
+  .now svg{width:72px;height:72px;flex:none}
+  .now-temp{font-size:40px;font-weight:700;line-height:1}
+  .now-desc{font-size:16px;color:var(--sub);margin-top:6px}
+  .precip{display:flex;align-items:center;gap:8px;background:var(--rain-bg);color:var(--rain);
+    border-radius:12px;padding:10px 12px;font-size:15px;line-height:1.5;margin-top:12px}
+  .precip svg{width:22px;height:22px;flex:none}
+  :root{--rain-bg:#e8f0fe;--rain:#1e40af;--sun:#f59e0b;--cloud:#9ca3af;--drop:#3b82f6;--snow:#60a5fa;--bolt:#eab308}
+  @media (prefers-color-scheme: dark){:root{--rain-bg:#1b2a4a;--rain:#a5c4ff;--cloud:#6b7280}}
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <span class="place" id="place">위치 확인 중…</span>
+    <button id="refresh" type="button">새로고침</button>
+  </div>
+  <div id="content"><p class="msg">현재 위치의 날씨를 불러오는 중이에요.</p></div>
+  <p class="foot" id="foot"></p>
+</main>
+
+<script>
+(function(){
+  var $content = document.getElementById('content');
+  var $place = document.getElementById('place');
+  var $foot = document.getElementById('foot');
+  var LS_KEY = 'yt-weather-last-pos';
+
+  function store(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  function load(k){ try{ return JSON.parse(localStorage.getItem(k)); }catch(e){ return null; } }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function r1(n){ return Math.round(n * 10) / 10; }
+  function deg(n){ return Math.round(n) + '°'; }
+
+  // 일평균: 그날 0~23시 시간별 기온의 평균
+  function dailyMeans(hourly, dates){
+    var sums = {}, counts = {};
+    hourly.time.forEach(function(t, i){
+      var d = t.slice(0, 10), v = hourly.temperature_2m[i];
+      if (v == null) return;
+      sums[d] = (sums[d] || 0) + v; counts[d] = (counts[d] || 0) + 1;
+    });
+    return dates.map(function(d){ return counts[d] ? sums[d] / counts[d] : null; });
+  }
+
+  // 비교 문장 만들기: diff = 기준일 대비 차이(일평균)
+  function phrase(diff, meanNow){
+    // 예보 오차(1~2°)보다 작은 차이는 체감하기 어려우므로 2° 미만은 '비슷해요'
+    if (Math.abs(diff) < 2) return { cls:'same', text:'비슷해요' };
+    var d = Math.round(diff);
+    if (d > 0) return { cls:'warm', text: d + '° ' + (meanNow >= 23 ? '더 더워요' : '따뜻해요') };
+    return { cls:'cold', text: Math.abs(d) + '° ' + (meanNow >= 23 ? '덜 더워요' : '추워요') };
+  }
+
+  // 일교차 안내: 최고·최저가 반대 방향으로 2° 이상씩 움직이면 평균만으론 안 보이니 따로 알림
+  function rangeNote(dMax, dMin, who){
+    if (dMax >= 2 && dMin <= -2)
+      return who + ' 낮은 더 따뜻하고 아침저녁은 더 쌀쌀해서 일교차가 커요. (최고 +' + Math.round(dMax) + '°, 최저 ' + Math.round(dMin) + '°)';
+    if (dMax <= -2 && dMin >= 2)
+      return who + ' 낮은 덜 따뜻하고 아침저녁은 덜 추워서 일교차가 작아요. (최고 ' + Math.round(dMax) + '°, 최저 +' + Math.round(dMin) + '°)';
+    return '';
+  }
+
+  // ---------- 날씨 아이콘 (WMO weather code 기준) ----------
+  var SUN = '<circle cx="32" cy="32" r="11" fill="var(--sun)"/><g stroke="var(--sun)" stroke-width="4" stroke-linecap="round"><path d="M32 8v6M32 50v6M8 32h6M50 32h6M15 15l4 4M45 45l4 4M15 49l4-4M45 19l4-4"/></g>';
+  var MOON = '<path d="M40 12a20 20 0 1 0 12 30A16 16 0 0 1 40 12z" fill="var(--sun)"/>';
+  var CLOUD = '<path d="M20 48h26a10 10 0 0 0 0-20 14 14 0 0 0-27-2 11 11 0 0 0 1 22z" fill="var(--cloud)"/>';
+  var CLOUD_HI = '<path d="M20 40h26a10 10 0 0 0 0-20 14 14 0 0 0-27-2 11 11 0 0 0 1 22z" fill="var(--cloud)"/>';
+  var SMALL_SUN = '<g transform="translate(-6,-6) scale(.75)">' + SUN + '</g>';
+  var SMALL_MOON = '<g transform="translate(-4,-6) scale(.7)">' + MOON + '</g>';
+  var DROPS = '<g stroke="var(--drop)" stroke-width="4" stroke-linecap="round"><path d="M24 46l-3 8M34 46l-3 8M44 46l-3 8"/></g>';
+  var FLAKES = '<g fill="var(--snow)"><circle cx="22" cy="51" r="3.2"/><circle cx="33" cy="55" r="3.2"/><circle cx="44" cy="51" r="3.2"/></g>';
+  var BOLT = '<path d="M34 40l-8 12h7l-3 10 11-14h-7l4-8z" fill="var(--bolt)"/>';
+  var FOG = '<g stroke="var(--cloud)" stroke-width="4" stroke-linecap="round"><path d="M14 46h36M18 54h28"/></g>';
+
+  function svg(inner){ return '<svg viewBox="0 0 64 64" aria-hidden="true">' + inner + '</svg>'; }
+  function isSnowCode(c){ return (c >= 71 && c <= 77) || c === 85 || c === 86; }
+  function isPrecipCode(c){ return (c >= 51 && c <= 67) || (c >= 71 && c <= 77) || (c >= 80 && c <= 86) || c >= 95; }
+
+  function weatherInfo(code, isDay){
+    var c = code;
+    if (c === 0) return { name: isDay ? '맑음' : '맑은 밤', icon: svg(isDay ? SUN : MOON) };
+    if (c === 1 || c === 2) return { name: '구름 조금', icon: svg((isDay ? SMALL_SUN : SMALL_MOON) + '<g transform="translate(4,8)">' + CLOUD_HI.replace('M20 40','M20 40') + '</g>') };
+    if (c === 3) return { name: '흐림', icon: svg(CLOUD) };
+    if (c === 45 || c === 48) return { name: '안개', icon: svg(CLOUD_HI + FOG) };
+    if (c >= 95) return { name: '뇌우', icon: svg(CLOUD_HI + BOLT) };
+    if (isSnowCode(c)) return { name: c === 77 ? '싸락눈' : '눈', icon: svg(CLOUD_HI + FLAKES) };
+    if (c === 66 || c === 67) return { name: '진눈깨비', icon: svg(CLOUD_HI + '<g stroke="var(--drop)" stroke-width="4" stroke-linecap="round"><path d="M24 46l-3 8M44 46l-3 8"/></g><circle cx="33" cy="53" r="3.2" fill="var(--snow)"/>') };
+    if (c >= 51 && c <= 57) return { name: '이슬비', icon: svg(CLOUD_HI + DROPS) };
+    if ((c >= 61 && c <= 65) || (c >= 80 && c <= 82)) return { name: (c === 65 || c === 82) ? '강한 비' : '비', icon: svg(CLOUD_HI + DROPS) };
+    return { name: '흐림', icon: svg(CLOUD) };
+  }
+
+  // ---------- 비·눈 시간대 ----------
+  // 한 시간이라도 강수량 0.1mm 이상이거나 날씨코드가 비·눈이면 '오는 시간'으로 봄
+  function precipRanges(hourly, date, fromHour){
+    var hrs = [];
+    hourly.time.forEach(function(t, i){
+      if (t.slice(0, 10) !== date) return;
+      var h = parseInt(t.slice(11, 13), 10);
+      if (h < fromHour) return;
+      var code = hourly.weather_code[i], p = hourly.precipitation[i] || 0, sf = hourly.snowfall ? (hourly.snowfall[i] || 0) : 0;
+      if (p >= 0.1 || isPrecipCode(code)) hrs.push({ h: h, snow: sf > 0 || isSnowCode(code) });
+    });
+    var out = [];
+    hrs.forEach(function(x){
+      var last = out[out.length - 1];
+      if (last && last.end === x.h){ last.end = x.h + 1; last.snow = last.snow || x.snow; last.rain = last.rain || !x.snow; }
+      else out.push({ start: x.h, end: x.h + 1, snow: x.snow, rain: !x.snow });
+    });
+    return out;
+  }
+
+  function precipHTML(ranges, nowHour){
+    if (!ranges.length) return '';
+    var snow = ranges.some(function(r){ return r.snow; }), rain = ranges.some(function(r){ return r.rain; });
+    var kind = snow && rain ? '비·눈' : snow ? '눈' : '비';
+    var txt = ranges.map(function(r){
+      var s = (nowHour != null && r.start === nowHour) ? '지금' : r.start + '시';
+      var e = r.end === 24 ? '자정' : r.end + '시';
+      return s + '~' + e;
+    }).join(', ');
+    var icon = snow && !rain ? svg(CLOUD_HI + FLAKES) : svg(CLOUD_HI + DROPS);
+    return '<div class="precip">' + icon + '<span><b>' + kind + '</b> ' + txt + '</span></div>';
+  }
+
+  function render(data){
+    var dly = data.daily;
+    var dates = dly.time; // [어제, 오늘, 내일]
+    var max = dly.temperature_2m_max, min = dly.temperature_2m_min;
+    var mean = dailyMeans(data.hourly, dates);
+    if (dates.length < 3 || mean.indexOf(null) !== -1) throw new Error('데이터가 부족해요');
+
+    var t = phrase(mean[1] - mean[0], mean[1]);
+    var n = phrase(mean[2] - mean[1], mean[2]);
+    var noteT = rangeNote(max[1] - max[0], min[1] - min[0], '오늘은 어제보다');
+    var noteN = rangeNote(max[2] - max[1], min[2] - min[1], '내일은 오늘보다');
+
+    var d0 = new Date(dates[1] + 'T00:00:00');
+    var wk = ['일','월','화','수','목','금','토'][d0.getDay()];
+
+    var cur = data.current;
+    var info = weatherInfo(cur.weather_code, cur.is_day === 1);
+    var nowHour = parseInt(cur.time.slice(11, 13), 10);
+    var precipToday = precipHTML(precipRanges(data.hourly, dates[1], nowHour), nowHour);
+    var precipTomorrow = precipHTML(precipRanges(data.hourly, dates[2], 0), null);
+
+    $content.innerHTML =
+      '<div class="now">' + info.icon +
+        '<div><div class="now-temp">' + deg(cur.temperature_2m) + '</div>' +
+        '<div class="now-desc">지금 ' + info.name + '</div></div>' +
+      '</div>' +
+      '<section class="card">' +
+        '<p class="label">' + (d0.getMonth()+1) + '월 ' + d0.getDate() + '일 (' + wk + ') · 오늘</p>' +
+        '<p class="head">오늘은 어제보다<br><span class="' + t.cls + '">' + t.text + '</span></p>' +
+        '<p class="detail">최고 ' + deg(max[1]) + ' (어제 ' + deg(max[0]) + ') · 최저 ' + deg(min[1]) + ' (어제 ' + deg(min[0]) + ')<br>' +
+        '일평균 ' + r1(mean[1]) + '° (어제 ' + r1(mean[0]) + '°)</p>' +
+        precipToday +
+        (noteT ? '<div class="note">' + esc(noteT) + '</div>' : '') +
+      '</section>' +
+      '<section class="card">' +
+        '<p class="label">내일</p>' +
+        '<p class="head small">내일은 오늘보다 <span class="' + n.cls + '">' + n.text + '</span></p>' +
+        '<p class="detail">최고 ' + deg(max[2]) + ' · 최저 ' + deg(min[2]) + ' · 일평균 ' + r1(mean[2]) + '°</p>' +
+        precipTomorrow +
+        (noteN ? '<div class="note">' + esc(noteN) + '</div>' : '') +
+      '</section>';
+
+    var now = new Date();
+    $foot.innerHTML = '비교 기준: 하루 24시간 평균기온 · ' + now.getHours() + ':' + String(now.getMinutes()).padStart(2,'0') + ' 업데이트<br>' +
+      '날씨 데이터 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>';
+  }
+
+  function showError(msg){
+    $content.innerHTML = '<p class="msg">' + esc(msg).replace(/\n/g, '<br>') + '</p>';
+  }
+
+  function fetchWeather(lat, lon){
+    var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+      '&current=temperature_2m,weather_code,is_day' +
+      '&daily=temperature_2m_max,temperature_2m_min&hourly=temperature_2m,precipitation,snowfall,weather_code' +
+      '&past_days=1&forecast_days=2&timezone=auto';
+    return fetch(url).then(function(r){
+      if (!r.ok) throw new Error('날씨 서버 응답 오류 (' + r.status + ')');
+      return r.json();
+    });
+  }
+
+  function fetchPlace(lat, lon){
+    var url = 'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' + lat +
+      '&longitude=' + lon + '&localityLanguage=ko';
+    return fetch(url).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+      if (!j) return null;
+      var parts = [j.city || j.principalSubdivision, j.locality].filter(Boolean);
+      if (parts.length === 2 && parts[0] === parts[1]) parts.pop();
+      return parts.join(' ') || null;
+    }).catch(function(){ return null; });
+  }
+
+  function run(lat, lon){
+    lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;
+    fetchPlace(lat, lon).then(function(name){ $place.textContent = name || '현재 위치'; });
+    fetchWeather(lat, lon).then(render).catch(function(e){
+      showError('날씨를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.\n(' + e.message + ')');
+    });
+  }
+
+  function start(){
+    $content.innerHTML = '<p class="msg">현재 위치의 날씨를 불러오는 중이에요.</p>';
+    var last = load(LS_KEY);
+    if (!('geolocation' in navigator)){
+      if (last) return run(last.lat, last.lon);
+      return showError('이 브라우저는 위치 기능을 지원하지 않아요.');
+    }
+    navigator.geolocation.getCurrentPosition(function(p){
+      var pos = { lat: p.coords.latitude, lon: p.coords.longitude };
+      store(LS_KEY, pos);
+      run(pos.lat, pos.lon);
+    }, function(err){
+      if (last){ $place.textContent = '마지막 위치'; return run(last.lat, last.lon); }
+      showError(err.code === 1
+        ? '위치 권한이 꺼져 있어요. 휴대폰 설정에서 이 사이트의 위치 접근을 허용한 뒤 새로고침해 주세요.'
+        : '위치를 확인하지 못했어요. 잠시 뒤 새로고침해 주세요.');
+    }, { enableHighAccuracy:false, timeout:10000, maximumAge:30*60*1000 });
+  }
+
+  document.getElementById('refresh').addEventListener('click', start);
+  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') start(); });
+  start();
+})();
+</script>
+</body>
+</html>

@@ -50,6 +50,11 @@
   .week span{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
   .week span.today{color:var(--text);font-weight:700}
   .week svg{width:34px;height:34px}
+  .loading{text-align:center;padding:56px 8px;color:var(--sub)}
+  .ld{position:relative;width:72px;height:72px;margin:0 auto 16px}
+  .ld svg{position:absolute;inset:0;width:72px;height:72px;opacity:0;animation:ldcycle 2.4s infinite}
+  .ld svg:nth-child(2){animation-delay:.6s}.ld svg:nth-child(3){animation-delay:1.2s}.ld svg:nth-child(4){animation-delay:1.8s}
+  @keyframes ldcycle{0%{opacity:0;transform:scale(.85)}6%,22%{opacity:1;transform:scale(1)}28%,100%{opacity:0;transform:scale(.85)}}
   :root{--rain-bg:#e8f0fe;--rain:#1e40af;--sun:#f59e0b;--cloud:#9ca3af;--drop:#3b82f6;--snow:#60a5fa;--bolt:#eab308}
   @media (prefers-color-scheme: dark){:root{--rain-bg:#1b2a4a;--rain:#a5c4ff;--cloud:#6b7280}}
 </style>
@@ -57,10 +62,10 @@
 <body>
 <main>
   <div class="top">
-    <span class="place" id="place">위치 확인 중…</span>
+    <span class="place" id="place">현재 위치</span>
     <button id="refresh" type="button">새로고침</button>
   </div>
-  <div id="content"><p class="msg">현재 위치의 날씨를 불러오는 중이에요.</p></div>
+  <div id="content"></div>
   <p class="foot" id="foot"></p>
 </main>
 
@@ -170,13 +175,34 @@
     return '<div class="precip">' + icon + '<span><b>' + kind + '</b> ' + txt + '</span></div>';
   }
 
-  function weekHTML(dates, codes){
+  // 낮(9~18시) 대표 날씨: 비·눈이 3시간 이상이면 비·눈, 아니면 가장 많이 나온 날씨
+  function dayCode(hourly, date, fallback){
+    var precip = {}, sky = {}, pHours = 0;
+    hourly.time.forEach(function(t, i){
+      if (t.slice(0, 10) !== date) return;
+      var h = parseInt(t.slice(11, 13), 10);
+      if (h < 9 || h >= 18) return;
+      var c = hourly.weather_code[i], p = hourly.precipitation[i] || 0;
+      if (isPrecipCode(c) || p >= 0.1){
+        pHours++;
+        var pc = isPrecipCode(c) ? c : ((hourly.snowfall && hourly.snowfall[i] > 0) ? 71 : 61);
+        precip[pc] = (precip[pc] || 0) + 1;
+      } else sky[c] = (sky[c] || 0) + 1;
+    });
+    function top(o){ var b = null; Object.keys(o).forEach(function(k){ if (b === null || o[k] > o[b]) b = k; }); return b === null ? null : +b; }
+    if (pHours >= 3) return top(precip);
+    var s = top(sky);
+    return s === null ? fallback : s;
+  }
+
+  function weekHTML(dates, codes, hourly, nowCode, nowIsDay){
     if (!codes || dates.length < 2) return '';
     var wk = ['일','월','화','수','목','금','토'];
     var cells = dates.slice(0, 7).map(function(d, i){
       var dt = new Date(d + 'T00:00:00');
       var label = i === 0 ? '오늘' : i === 1 ? '내일' : wk[dt.getDay()];
-      return '<div><span' + (i === 0 ? ' class="today"' : '') + '>' + label + '</span>' + weatherInfo(codes[i], true).icon + '</div>';
+      var code = i === 0 ? nowCode : dayCode(hourly, d, codes[i]);
+      return '<div><span' + (i === 0 ? ' class="today"' : '') + '>' + label + '</span>' + weatherInfo(code, i === 0 ? nowIsDay : true).icon + '</div>';
     }).join('');
     return '<section class="card"><p class="label">일주일</p><div class="week">' + cells + '</div></section>';
   }
@@ -222,7 +248,7 @@
         precipTomorrow +
         (noteN ? '<div class="note">' + esc(noteN) + '</div>' : '') +
       '</section>' +
-      weekHTML(dates.slice(1), dly.weather_code.slice(1));
+      weekHTML(dates.slice(1), dly.weather_code.slice(1), data.hourly, cur.weather_code, cur.is_day === 1);
 
     var now = new Date();
     $foot.innerHTML = '비교 기준: 하루 24시간 평균기온 · ' + now.getHours() + ':' + String(now.getMinutes()).padStart(2,'0') + ' 업데이트<br>' +
@@ -244,36 +270,38 @@
     });
   }
 
-  function fetchPlace(lat, lon){
-    var url = 'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' + lat +
-      '&longitude=' + lon + '&localityLanguage=ko';
-    return fetch(url).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
-      if (!j) return null;
-      var parts = [j.city || j.principalSubdivision, j.locality].filter(Boolean);
-      if (parts.length === 2 && parts[0] === parts[1]) parts.pop();
-      return parts.join(' ') || null;
-    }).catch(function(){ return null; });
-  }
-
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;
-    fetchPlace(lat, lon).then(function(name){ $place.textContent = name || '현재 위치'; });
     fetchWeather(lat, lon).then(render).catch(function(e){
       showError('날씨를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.\n(' + e.message + ')');
     });
   }
 
-  function start(){
-    $content.innerHTML = '<p class="msg">현재 위치의 날씨를 불러오는 중이에요.</p>';
-    $place.textContent = '위치 확인 중…';
+  function showLoading(){
+    $content.innerHTML = '<div class="loading"><div class="ld">' +
+      weatherInfo(0, true).icon + weatherInfo(3, true).icon + weatherInfo(61, true).icon + weatherInfo(73, true).icon +
+      '</div>날씨를 가져오는 중이에요</div>';
+  }
+
+  var POS_TTL = 3 * 60 * 60 * 1000; // 3시간 안에 잡은 위치는 다시 묻지 않고 재사용
+
+  function start(force){
+    showLoading();
     var last = load(LS_KEY);
+    if (!force && last && last.t && (Date.now() - last.t) < POS_TTL){
+      $place.textContent = '현재 위치';
+      return run(last.lat, last.lon);
+    }
+    $place.textContent = '위치 확인 중…';
     if (!('geolocation' in navigator)){
-      if (last) return run(last.lat, last.lon);
+      if (last){ $place.textContent = '마지막 위치'; return run(last.lat, last.lon); }
+      $place.textContent = '위치 없음';
       return showError('이 브라우저는 위치 기능을 지원하지 않아요.');
     }
     navigator.geolocation.getCurrentPosition(function(p){
-      var pos = { lat: p.coords.latitude, lon: p.coords.longitude };
+      var pos = { lat: p.coords.latitude, lon: p.coords.longitude, t: Date.now() };
       store(LS_KEY, pos);
+      $place.textContent = '현재 위치';
       run(pos.lat, pos.lon);
     }, function(err){
       if (last){ $place.textContent = '마지막 위치'; return run(last.lat, last.lon); }
@@ -284,9 +312,9 @@
     }, { enableHighAccuracy:false, timeout:10000, maximumAge:30*60*1000 });
   }
 
-  document.getElementById('refresh').addEventListener('click', start);
-  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') start(); });
-  start();
+  document.getElementById('refresh').addEventListener('click', function(){ start(true); });
+  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') start(false); });
+  start(false);
 })();
 </script>
 </body>

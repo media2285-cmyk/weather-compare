@@ -196,8 +196,6 @@
     return { hit: any, sure: sure, prob: prob, snow: snow };
   }
   function commuteHTML(hourly, date, nowHour){
-    var d = new Date(date + 'T00:00:00').getDay();
-    if (d === 0 || d === 6) return '';                       // 주말 제외
     var m = hourInfo(hourly, date);
     var amOpen = nowHour == null || nowHour < 9, pmOpen = nowHour == null || nowHour < 20;
     var am = amOpen ? judge(m, AM) : { hit:false }, pm = pmOpen ? judge(m, PM) : { hit:false };

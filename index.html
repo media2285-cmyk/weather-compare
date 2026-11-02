@@ -46,6 +46,10 @@
   .precip{display:flex;align-items:center;gap:8px;background:var(--rain-bg);color:var(--rain);
     border-radius:12px;padding:10px 12px;font-size:15px;line-height:1.5;margin-top:12px}
   .precip svg{width:22px;height:22px;flex:none}
+  .week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center}
+  .week span{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
+  .week span.today{color:var(--text);font-weight:700}
+  .week svg{width:34px;height:34px}
   :root{--rain-bg:#e8f0fe;--rain:#1e40af;--sun:#f59e0b;--cloud:#9ca3af;--drop:#3b82f6;--snow:#60a5fa;--bolt:#eab308}
   @media (prefers-color-scheme: dark){:root{--rain-bg:#1b2a4a;--rain:#a5c4ff;--cloud:#6b7280}}
 </style>
@@ -166,12 +170,23 @@
     return '<div class="precip">' + icon + '<span><b>' + kind + '</b> ' + txt + '</span></div>';
   }
 
+  function weekHTML(dates, codes){
+    if (!codes || dates.length < 2) return '';
+    var wk = ['일','월','화','수','목','금','토'];
+    var cells = dates.slice(0, 7).map(function(d, i){
+      var dt = new Date(d + 'T00:00:00');
+      var label = i === 0 ? '오늘' : i === 1 ? '내일' : wk[dt.getDay()];
+      return '<div><span' + (i === 0 ? ' class="today"' : '') + '>' + label + '</span>' + weatherInfo(codes[i], true).icon + '</div>';
+    }).join('');
+    return '<section class="card"><p class="label">일주일</p><div class="week">' + cells + '</div></section>';
+  }
+
   function render(data){
     var dly = data.daily;
     var dates = dly.time; // [어제, 오늘, 내일]
     var max = dly.temperature_2m_max, min = dly.temperature_2m_min;
-    var mean = dailyMeans(data.hourly, dates);
-    if (dates.length < 3 || mean.indexOf(null) !== -1) throw new Error('데이터가 부족해요');
+    var mean = dailyMeans(data.hourly, dates.slice(0, 3));
+    if (dates.length < 3 || mean.length < 3 || mean.indexOf(null) !== -1) throw new Error('데이터가 부족해요');
 
     var t = phrase(mean[1] - mean[0], mean[1]);
     var n = phrase(mean[2] - mean[1], mean[2]);
@@ -206,7 +221,8 @@
         '<p class="detail">최고 ' + deg(max[2]) + ' · 최저 ' + deg(min[2]) + ' · 일평균 ' + r1(mean[2]) + '°</p>' +
         precipTomorrow +
         (noteN ? '<div class="note">' + esc(noteN) + '</div>' : '') +
-      '</section>';
+      '</section>' +
+      weekHTML(dates.slice(1), dly.weather_code.slice(1));
 
     var now = new Date();
     $foot.innerHTML = '비교 기준: 하루 24시간 평균기온 · ' + now.getHours() + ':' + String(now.getMinutes()).padStart(2,'0') + ' 업데이트<br>' +
@@ -220,8 +236,8 @@
   function fetchWeather(lat, lon){
     var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
       '&current=temperature_2m,weather_code,is_day' +
-      '&daily=temperature_2m_max,temperature_2m_min&hourly=temperature_2m,precipitation,snowfall,weather_code' +
-      '&past_days=1&forecast_days=2&timezone=auto';
+      '&daily=temperature_2m_max,temperature_2m_min,weather_code&hourly=temperature_2m,precipitation,snowfall,weather_code' +
+      '&past_days=1&forecast_days=7&timezone=auto';
     return fetch(url).then(function(r){
       if (!r.ok) throw new Error('날씨 서버 응답 오류 (' + r.status + ')');
       return r.json();

@@ -249,6 +249,7 @@
 
   function start(){
     $content.innerHTML = '<p class="msg">현재 위치의 날씨를 불러오는 중이에요.</p>';
+    $place.textContent = '위치 확인 중…';
     var last = load(LS_KEY);
     if (!('geolocation' in navigator)){
       if (last) return run(last.lat, last.lon);
@@ -260,6 +261,7 @@
       run(pos.lat, pos.lon);
     }, function(err){
       if (last){ $place.textContent = '마지막 위치'; return run(last.lat, last.lon); }
+      $place.textContent = '위치 없음';
       showError(err.code === 1
         ? '위치 권한이 꺼져 있어요. 휴대폰 설정에서 이 사이트의 위치 접근을 허용한 뒤 새로고침해 주세요.'
         : '위치를 확인하지 못했어요. 잠시 뒤 새로고침해 주세요.');

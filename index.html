@@ -48,6 +48,10 @@
   .precip{display:flex;align-items:center;gap:8px;background:var(--rain-bg);color:var(--rain);
     border-radius:12px;padding:10px 12px;font-size:15px;line-height:1.5;margin-top:12px}
   .precip svg{width:22px;height:22px;flex:none}
+  .commute{display:flex;align-items:center;gap:8px;background:var(--rain);color:var(--card);
+    border-radius:12px;padding:10px 12px;font-size:16px;font-weight:700;line-height:1.4;margin-top:12px}
+  .commute.weak{background:var(--rain-bg);color:var(--rain)}
+  .commute svg{width:22px;height:22px;flex:none}
   .week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center}
   .week span{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
   .week span.today{color:var(--text);font-weight:700}
@@ -164,6 +168,56 @@
     return out;
   }
 
+  // ---------- 출퇴근길 비 ----------
+  var AM = [8], PM = [18, 19];          // 출근 8~9시, 퇴근 18~20시
+  var ALLDAY = [8, 19];                  // 이 사이가 모두 비면 '하루 종일 비'
+  function hourInfo(hourly, date){
+    var m = {};
+    hourly.time.forEach(function(t, i){
+      if (t.slice(0, 10) !== date) return;
+      var c = hourly.weather_code[i], p = hourly.precipitation[i] || 0;
+      var prob = hourly.precipitation_probability ? hourly.precipitation_probability[i] : null;
+      m[parseInt(t.slice(11, 13), 10)] = {
+        sure: isPrecipCode(c) || p >= 0.1,
+        prob: prob == null ? 0 : prob,
+        snow: isSnowCode(c) || (hourly.snowfall && hourly.snowfall[i] > 0)
+      };
+    });
+    return m;
+  }
+  function judge(m, hours){
+    var sure = false, prob = 0, any = false, snow = false;
+    hours.forEach(function(h){
+      var x = m[h]; if (!x) return;
+      if (x.sure) sure = true;
+      if (x.prob > prob) prob = x.prob;
+      if (x.sure || x.prob >= 50){ any = true; if (x.snow) snow = true; }
+    });
+    return { hit: any, sure: sure, prob: prob, snow: snow };
+  }
+  function commuteHTML(hourly, date, nowHour){
+    var d = new Date(date + 'T00:00:00').getDay();
+    if (d === 0 || d === 6) return '';                       // 주말 제외
+    var m = hourInfo(hourly, date);
+    var amOpen = nowHour == null || nowHour < 9, pmOpen = nowHour == null || nowHour < 20;
+    var am = amOpen ? judge(m, AM) : { hit:false }, pm = pmOpen ? judge(m, PM) : { hit:false };
+    if (!am.hit && !pm.hit) return '';
+    var allHours = []; for (var h = ALLDAY[0]; h <= ALLDAY[1]; h++) allHours.push(h);
+    var allDay = amOpen && allHours.every(function(h){ var x = m[h]; return x && (x.sure || x.prob >= 50); });
+    var snow = (am.hit && am.snow) || (pm.hit && pm.snow);
+    var word = snow ? '눈' : '비';
+    var text, sure;
+    if (allDay){ text = '하루 종일 ' + word; sure = true; }
+    else if (am.hit && pm.hit){ text = '출퇴근길 모두 ' + word; sure = am.sure || pm.sure; }
+    else if (am.hit){ text = '출근길 ' + word + ' (8~9시)'; sure = am.sure; }
+    else { text = '퇴근길 ' + word + ' (18~20시)'; sure = pm.sure; }
+    var maxProb = Math.max(am.prob || 0, pm.prob || 0);
+    if (!sure) text = text.replace(' (', ' 가능성 (') + (text.indexOf('(') < 0 ? ' 가능성' : '');
+    if (!sure) text += ' · ' + maxProb + '%';
+    var umbrella = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 18 0z" fill="currentColor"/><path d="M12 12v7a2 2 0 0 1-4 0"/></svg>';
+    return '<div class="commute' + (sure ? '' : ' weak') + '">' + umbrella + '<span>' + text + '</span></div>';
+  }
+
   function precipHTML(ranges, nowHour){
     if (!ranges.length) return '';
     var snow = ranges.some(function(r){ return r.snow; }), rain = ranges.some(function(r){ return r.rain; });
@@ -240,6 +294,7 @@
         '<p class="head">오늘은 어제보다<br><span class="' + t.cls + '">' + t.text + '</span></p>' +
         '<p class="detail">최고 ' + deg(max[1]) + ' (어제 ' + deg(max[0]) + ') · 최저 ' + deg(min[1]) + ' (어제 ' + deg(min[0]) + ')<br>' +
         '일평균 ' + r1(mean[1]) + '° (어제 ' + r1(mean[0]) + '°)</p>' +
+        commuteHTML(data.hourly, dates[1], nowHour) +
         precipToday +
         (noteT ? '<div class="note">' + esc(noteT) + '</div>' : '') +
       '</section>' +
@@ -247,6 +302,7 @@
         '<p class="label">내일</p>' +
         '<p class="head small">내일은 오늘보다 <span class="' + n.cls + '">' + n.text + '</span></p>' +
         '<p class="detail">최고 ' + deg(max[2]) + ' · 최저 ' + deg(min[2]) + ' · 일평균 ' + r1(mean[2]) + '°</p>' +
+        commuteHTML(data.hourly, dates[2], null) +
         precipTomorrow +
         (noteN ? '<div class="note">' + esc(noteN) + '</div>' : '') +
       '</section>' +
@@ -264,7 +320,7 @@
   function fetchWeather(lat, lon){
     var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
       '&current=temperature_2m,weather_code,is_day' +
-      '&daily=temperature_2m_max,temperature_2m_min,weather_code&hourly=temperature_2m,precipitation,snowfall,weather_code' +
+      '&daily=temperature_2m_max,temperature_2m_min,weather_code&hourly=temperature_2m,precipitation,precipitation_probability,snowfall,weather_code' +
       '&past_days=1&forecast_days=7&timezone=auto';
     return fetch(url).then(function(r){
       if (!r.ok) throw new Error('날씨 서버 응답 오류 (' + r.status + ')');

@@ -180,20 +180,22 @@
       m[parseInt(t.slice(11, 13), 10)] = {
         sure: isPrecipCode(c) || p >= 0.1,
         prob: prob == null ? 0 : prob,
-        snow: isSnowCode(c) || (hourly.snowfall && hourly.snowfall[i] > 0)
+        snow: isSnowCode(c) || (hourly.snowfall && hourly.snowfall[i] > 0),
+        temp: hourly.temperature_2m[i]
       };
     });
     return m;
   }
   function judge(m, hours){
-    var sure = false, prob = 0, any = false, snow = false;
+    var sure = false, prob = 0, any = false, snow = false, temps = [];
     hours.forEach(function(h){
       var x = m[h]; if (!x) return;
       if (x.sure) sure = true;
       if (x.prob > prob) prob = x.prob;
       if (x.sure || x.prob >= 50){ any = true; if (x.snow) snow = true; }
+      if (!x.sure && x.prob >= 50 && x.temp != null) temps.push(x.temp);
     });
-    return { hit: any, sure: sure, prob: prob, snow: snow };
+    return { hit: any, sure: sure, prob: prob, snow: snow, temps: temps };
   }
   function commuteHTML(hourly, date, nowHour){
     var m = hourInfo(hourly, date);
@@ -202,13 +204,21 @@
     if (!am.hit && !pm.hit) return '';
     var allHours = []; for (var h = ALLDAY[0]; h <= ALLDAY[1]; h++) allHours.push(h);
     var allDay = amOpen && allHours.every(function(h){ var x = m[h]; return x && (x.sure || x.prob >= 50); });
-    var snow = (am.hit && am.snow) || (pm.hit && pm.snow);
-    var word = snow ? '눈' : '비';
-    var text, sure;
-    if (allDay){ text = '하루 종일 ' + word; sure = true; }
-    else if (am.hit && pm.hit){ text = '출퇴근길 모두 ' + word; sure = am.sure || pm.sure; }
-    else if (am.hit){ text = '출근길 ' + word + ' (8~9시)'; sure = am.sure; }
-    else { text = '퇴근길 ' + word + ' (18~20시)'; sure = pm.sure; }
+    var sure = allDay ? true : (am.hit && am.sure) || (pm.hit && pm.sure);
+    var word;
+    if (sure){
+      word = ((am.hit && am.snow) || (pm.hit && pm.snow)) ? '눈' : '비';
+    } else {
+      // 강수확률만 있는 경우: 기온으로 종류 추정 (0° 이하 눈, 0~3° 비·눈, 3° 초과 비)
+      var temps = (am.hit ? am.temps : []).concat(pm.hit ? pm.temps : []);
+      var lo = Math.min.apply(null, temps), hi = Math.max.apply(null, temps);
+      word = !temps.length ? '비' : hi <= 0 ? '눈' : lo > 3 ? '비' : '비·눈';
+    }
+    var text;
+    if (allDay) text = '하루 종일 ' + word;
+    else if (am.hit && pm.hit) text = '출퇴근길 모두 ' + word;
+    else if (am.hit) text = '출근길 ' + word + ' (8~9시)';
+    else text = '퇴근길 ' + word + ' (18~20시)';
     var maxProb = Math.max(am.prob || 0, pm.prob || 0);
     if (!sure) text = text.replace(' (', ' 가능성 (') + (text.indexOf('(') < 0 ? ' 가능성' : '');
     if (!sure) text += ' · ' + maxProb + '%';

@@ -40,6 +40,22 @@
   .tbl td{padding:3px 0 3px 12px;text-align:right;white-space:nowrap}
   .tbl td:first-child,.tbl th:first-child{padding-left:0;text-align:left}
   .tbl .on{color:var(--text);font-weight:700}
+  .wear{margin:12px 0 0;font-size:15px;color:var(--text)}
+  .wear b{font-weight:700}
+  .toggle{display:block;width:100%;margin-top:12px;border:0;border-top:1px solid var(--line);border-radius:0;
+    background:none;padding:12px 0 0;color:var(--sub);font-size:14px;text-align:center}
+  .hourly{display:none;margin-top:10px}
+  .hourly.open{display:block}
+  .htbl{width:100%;border-collapse:collapse;font-size:14px}
+  .htbl th{font-weight:400;color:var(--sub);text-align:right;padding:4px 0}
+  .htbl td{text-align:right;padding:5px 0;border-top:1px solid var(--line)}
+  .htbl th:first-child,.htbl td:first-child{text-align:left;color:var(--sub)}
+  .htbl .on{font-weight:700}
+  .week .day{background:none;border:0;padding:6px 0;border-radius:10px;color:inherit;font:inherit;cursor:pointer;width:100%}
+  .week .day.sel{background:var(--rain-bg)}
+  .daydetail{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:15px;line-height:1.6}
+  .daydetail .precip{margin-top:8px}
+  .lastyear{margin:12px 0 0;font-size:13px;color:var(--sub)}
   .warm{color:var(--warm)} .cold{color:var(--cold)} .same{color:var(--same)}
   .detail{font-size:15px;color:var(--sub);line-height:1.6;margin:0}
   .note{background:var(--note-bg);color:var(--note);border-radius:12px;padding:10px 12px;
@@ -272,9 +288,75 @@
       var dt = new Date(d + 'T00:00:00');
       var label = i === 0 ? '오늘' : i === 1 ? '내일' : wk[dt.getDay()];
       var code = i === 0 ? nowCode : dayCode(hourly, d, codes[i]);
-      return '<div><span' + (i === 0 ? ' class="today"' : '') + '>' + label + '</span>' + weatherInfo(code, i === 0 ? nowIsDay : true).icon + '</div>';
+      return '<button type="button" class="day" data-day="' + i + '"><span' + (i === 0 ? ' class="today"' : '') + '>' + label + '</span>' + weatherInfo(code, i === 0 ? nowIsDay : true).icon + '</button>';
     }).join('');
-    return '<section class="card"><p class="label">7일 날씨</p><div class="week">' + cells + '</div></section>';
+    return '<section class="card"><p class="label">7일 날씨</p><div class="week">' + cells + '</div><div id="daydetail"></div></section>';
+  }
+
+  function tempAt(hourly, date, h){
+    var key = date + 'T' + String(h).padStart(2, '0') + ':00';
+    var i = hourly.time.indexOf(key);
+    return i < 0 ? null : hourly.temperature_2m[i];
+  }
+
+  // 옷차림 한 줄: 출근 시간(8시) 기온을 전날과 비교
+  function wearHTML(hourly, prevDate, date, prevName){
+    var a = tempAt(hourly, prevDate, 8), b = tempAt(hourly, date, 8);
+    if (a == null || b == null) return '';
+    var d = b - a, t;
+    if (d <= -3) t = prevName + '보다 한 겹 더';
+    else if (d >= 3) t = prevName + '보다 가볍게';
+    else t = prevName + '처럼 입어도 돼요';
+    return '<p class="wear">옷차림 · <b>' + t + '</b></p>';
+  }
+
+  // 시간별 비교 (3시간 간격)
+  function hourlyHTML(hourly, d0, d1, n0, n1, id){
+    var rows = '';
+    for (var h = 0; h < 24; h += 3){
+      var a = tempAt(hourly, d0, h), b = tempAt(hourly, d1, h);
+      if (a == null || b == null) continue;
+      var diff = Math.round(b - a);
+      var cls = diff >= 2 ? 'warm' : diff <= -2 ? 'cold' : 'same';
+      rows += '<tr><td>' + h + '시</td><td>' + deg(a) + '</td><td class="on">' + deg(b) + '</td><td class="' + cls + '">' +
+        (diff > 0 ? '+' : diff < 0 ? '−' : '') + Math.abs(diff) + '°</td></tr>';
+    }
+    if (!rows) return '';
+    return '<button class="toggle" type="button" data-toggle="' + id + '">시간별 ' + n0 + '·' + n1 + ' 비교 ▾</button>' +
+      '<div class="hourly" id="' + id + '"><table class="htbl"><tr><th></th><th>' + n0 + '</th><th class="on">' + n1 + '</th><th>차이</th></tr>' +
+      rows + '</table></div>';
+  }
+
+  // 7일 중 하루 상세
+  function dayDetailHTML(i){
+    var data = lastData, dly = data.daily, k = i + 1; // daily[0]은 어제
+    var date = dly.time[k], dt = new Date(date + 'T00:00:00');
+    var code = i === 0 ? data.current.weather_code : dayCode(data.hourly, date, dly.weather_code[k]);
+    var info = weatherInfo(code, i === 0 ? data.current.is_day === 1 : true);
+    var head = (dt.getMonth()+1) + '월 ' + dt.getDate() + '일 (' + ['일','월','화','수','목','금','토'][dt.getDay()] + ')';
+    var ranges = precipRanges(data.hourly, date, 0);
+    return '<div class="daydetail"><b>' + head + '</b> · ' + info.name + '<br>' +
+      '최저 ' + deg(dly.temperature_2m_min[k]) + ' · 최고 ' + deg(dly.temperature_2m_max[k]) +
+      (ranges.length ? precipHTML(ranges, null) : '<br><span style="color:var(--sub)">비·눈 소식 없음</span>') + '</div>';
+  }
+
+  // 작년 오늘 (재미 요소, 실패해도 조용히 무시)
+  function loadLastYear(lat, lon, todayDate, todayMean){
+    var y = parseInt(todayDate.slice(0, 4), 10) - 1;
+    var d = y + todayDate.slice(4);
+    var url = 'https://archive-api.open-meteo.com/v1/archive?latitude=' + lat + '&longitude=' + lon +
+      '&start_date=' + d + '&end_date=' + d + '&hourly=temperature_2m&timezone=auto';
+    fetch(url).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+      if (!j || !j.hourly) return;
+      var v = j.hourly.temperature_2m.filter(function(x){ return x != null; });
+      if (v.length < 20) return;
+      var m = v.reduce(function(a, b){ return a + b; }, 0) / v.length;
+      var diff = todayMean - m, t;
+      if (Math.abs(diff) < 2) t = '작년 오늘과 비슷해요';
+      else t = '작년 오늘보다 ' + Math.round(Math.abs(diff)) + '° ' + (diff > 0 ? '따뜻해요' : '추워요');
+      var el = document.getElementById('lastyear');
+      if (el) el.textContent = t + ' (작년 일평균 ' + r1(m) + '°)';
+    }).catch(function(){});
   }
 
   function headline(subject, base, ph){
@@ -292,7 +374,10 @@
     return '<p class="label">' + (d.getMonth()+1) + '월 ' + d.getDate() + '일 (' + ['일','월','화','수','목','금','토'][d.getDay()] + ') · ' + word + '</p>';
   }
 
+  var lastData = null, lastPos = null;
+
   function render(data){
+    lastData = data;
     var dly = data.daily;
     var dates = dly.time; // [어제, 오늘, 내일]
     var max = dly.temperature_2m_max, min = dly.temperature_2m_min;
@@ -320,19 +405,25 @@
         dateLabel(dates[1], '오늘') +
         '<div class="cmp">' + headline('오늘은', '어제', t) +
           cmpTable('어제', '오늘', { min:min[0], max:max[0], mean:mean[0] }, { min:min[1], max:max[1], mean:mean[1] }) + '</div>' +
+        wearHTML(data.hourly, dates[0], dates[1], '어제') +
         commuteHTML(data.hourly, dates[1], nowHour) +
         precipToday +
         (noteT ? '<div class="note">' + esc(noteT) + '</div>' : '') +
+        '<p class="lastyear" id="lastyear"></p>' +
+        hourlyHTML(data.hourly, dates[0], dates[1], '어제', '오늘', 'h-today') +
       '</section>' +
       '<section class="card">' +
         dateLabel(dates[2], '내일') +
         '<div class="cmp">' + headline('내일은', '오늘', n) +
           cmpTable('오늘', '내일', { min:min[1], max:max[1], mean:mean[1] }, { min:min[2], max:max[2], mean:mean[2] }) + '</div>' +
+        wearHTML(data.hourly, dates[1], dates[2], '오늘') +
         commuteHTML(data.hourly, dates[2], null) +
         precipTomorrow +
         (noteN ? '<div class="note">' + esc(noteN) + '</div>' : '') +
       '</section>' +
       weekHTML(dates.slice(1), dly.weather_code.slice(1), data.hourly, cur.weather_code, cur.is_day === 1);
+
+    if (lastPos) loadLastYear(lastPos.lat, lastPos.lon, dates[1], mean[1]);
 
     var now = new Date();
     $foot.innerHTML = '비교 기준: 하루 24시간 평균기온 · ' + now.getHours() + ':' + String(now.getMinutes()).padStart(2,'0') + ' 업데이트<br>' +
@@ -356,6 +447,7 @@
 
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;
+    lastPos = { lat: lat, lon: lon };
     fetchWeather(lat, lon).then(render).catch(function(e){
       showError('날씨를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.\n(' + e.message + ')');
     });
@@ -397,6 +489,24 @@
   }
 
   document.getElementById('refresh').addEventListener('click', function(){ start(true); });
+  $content.addEventListener('click', function(e){
+    var t = e.target.closest('[data-toggle]');
+    if (t){
+      var box = document.getElementById(t.getAttribute('data-toggle'));
+      var open = box.classList.toggle('open');
+      t.textContent = t.textContent.replace(open ? '▾' : '▴', open ? '▴' : '▾');
+      return;
+    }
+    var d = e.target.closest('[data-day]');
+    if (d && lastData){
+      var i = parseInt(d.getAttribute('data-day'), 10), wasSel = d.classList.contains('sel');
+      Array.prototype.forEach.call($content.querySelectorAll('.day'), function(x){ x.classList.remove('sel'); });
+      var box2 = document.getElementById('daydetail');
+      if (wasSel){ box2.innerHTML = ''; return; }
+      d.classList.add('sel');
+      box2.innerHTML = dayDetailHTML(i);
+    }
+  });
   document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') start(false); });
   start(false);
 })();

@@ -389,15 +389,35 @@
       '&current=temperature_2m,weather_code,is_day' +
       '&daily=temperature_2m_max,temperature_2m_min,weather_code&hourly=temperature_2m,precipitation,precipitation_probability,snowfall,weather_code' +
       '&past_days=1&forecast_days=7&timezone=auto';
-    return fetch(url).then(function(r){
-      if (!r.ok) throw new Error('날씨 서버 응답 오류 (' + r.status + ')');
-      return r.json();
+    function once(){
+      // 응답이 12초 안에 안 오면 끊고 실패 처리 (무한 로딩 방지)
+      var ctrl = ('AbortController' in window) ? new AbortController() : null;
+      var timer = setTimeout(function(){ if (ctrl) ctrl.abort(); }, 12000);
+      return fetch(url, ctrl ? { signal: ctrl.signal, cache: 'no-store' } : { cache: 'no-store' }).then(function(r){
+        clearTimeout(timer);
+        if (!r.ok) throw new Error('날씨 서버 응답 오류 (' + r.status + ')');
+        return r.json();
+      }, function(e){
+        clearTimeout(timer);
+        throw new Error(e && e.name === 'AbortError' ? '응답 시간 초과' : '네트워크 연결 실패');
+      });
+    }
+    // 한 번 실패하면 1.5초 뒤 한 번 더 시도
+    return once().catch(function(){
+      return new Promise(function(res){ setTimeout(res, 1500); }).then(once);
     });
   }
 
+  var reqSeq = 0; // 가장 최근 요청만 화면에 반영
+
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;
-    fetchWeather(lat, lon).then(render).catch(function(e){
+    var my = reqSeq;
+    fetchWeather(lat, lon).then(function(data){
+      if (my !== reqSeq) return;   // 더 새 요청이 있으면 무시
+      render(data);
+    }).catch(function(e){
+      if (my !== reqSeq) return;   // 이전 요청의 실패가 새 화면을 덮지 않게
       showError('날씨를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.\n(' + e.message + ')');
     });
   }
@@ -411,6 +431,8 @@
   var POS_TTL = 0; // 0이면 매번 위치를 새로 잡음 (위치 재사용하려면 예: 60 * 60 * 1000 = 1시간)
 
   function start(force){
+    reqSeq++;
+    var my = reqSeq;
     showLoading();
     var last = load(LS_KEY);
     if (!force && last && last.t && (Date.now() - last.t) < POS_TTL){
@@ -424,11 +446,13 @@
       return showError('이 브라우저는 위치 기능을 지원하지 않아요.');
     }
     navigator.geolocation.getCurrentPosition(function(p){
+      if (my !== reqSeq) return;
       var pos = { lat: p.coords.latitude, lon: p.coords.longitude, t: Date.now() };
       store(LS_KEY, pos);
       $place.textContent = '현재 위치';
       run(pos.lat, pos.lon);
     }, function(err){
+      if (my !== reqSeq) return;
       if (last){ $place.textContent = '마지막 위치'; return run(last.lat, last.lon); }
       $place.textContent = '위치 없음';
       showError(err.code === 1

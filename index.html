@@ -389,27 +389,30 @@
       '&current=temperature_2m,weather_code,is_day' +
       '&daily=temperature_2m_max,temperature_2m_min,weather_code&hourly=temperature_2m,precipitation,precipitation_probability,snowfall,weather_code' +
       '&past_days=1&forecast_days=7&timezone=auto';
-    function once(){
-      // 응답이 12초 안에 안 오면 끊고 실패 처리 (무한 로딩 방지)
+    function once(n){
+      setStage('날씨 서버 요청 ' + n + '차');
       var ctrl = ('AbortController' in window) ? new AbortController() : null;
-      var timer = setTimeout(function(){ if (ctrl) ctrl.abort(); }, 12000);
-      return fetch(url, ctrl ? { signal: ctrl.signal, cache: 'no-store' } : { cache: 'no-store' }).then(function(r){
-        clearTimeout(timer);
+      var req = fetch(url, ctrl ? { signal: ctrl.signal, cache: 'no-store' } : { cache: 'no-store' }).then(function(r){
+        setStage('날씨 서버 응답 받음 (' + r.status + ')');
         if (!r.ok) throw new Error('날씨 서버 응답 오류 (' + r.status + ')');
         return r.json();
       }, function(e){
-        clearTimeout(timer);
         throw new Error(e && e.name === 'AbortError' ? '응답 시간 초과' : '네트워크 연결 실패');
       });
+      // 응답·데이터 읽기를 합쳐 12초가 지나면 무조건 실패 처리 (무한 로딩 방지)
+      var limit = new Promise(function(_, rej){
+        setTimeout(function(){ if (ctrl) try { ctrl.abort(); } catch(e){} rej(new Error('응답 시간 초과')); }, 12000);
+      });
+      return Promise.race([req, limit]);
     }
     // 한 번 실패하면 1.5초 뒤 한 번 더 시도
-    return once().catch(function(){
-      return new Promise(function(res){ setTimeout(res, 1500); }).then(once);
+    return once(1).catch(function(){
+      return new Promise(function(res){ setTimeout(res, 1500); }).then(function(){ return once(2); });
     });
   }
 
   var reqSeq = 0; // 가장 최근 요청만 화면에 반영
-  var APP_VER = 'v261117b';
+  var APP_VER = 'v261117c';
 
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;
@@ -426,8 +429,10 @@
   function showLoading(){
     $content.innerHTML = '<div class="loading"><div class="ld">' +
       weatherInfo(0, true).icon + weatherInfo(3, true).icon + weatherInfo(61, true).icon + weatherInfo(73, true).icon +
-      '</div>날씨를 가져오는 중이에요<div style="font-size:11px;margin-top:10px;opacity:.6">' + APP_VER + '</div></div>';
+      '</div>날씨를 가져오는 중이에요<div id="stage" style="font-size:12px;margin-top:10px;opacity:.7"></div>' +
+      '<div style="font-size:11px;margin-top:4px;opacity:.5">' + APP_VER + '</div></div>';
   }
+  function setStage(t){ var el = document.getElementById('stage'); if (el) el.textContent = t; }
 
   var POS_TTL = 0; // 0이면 매번 위치를 새로 잡음 (위치 재사용하려면 예: 60 * 60 * 1000 = 1시간)
 
@@ -435,6 +440,11 @@
     reqSeq++;
     var my = reqSeq;
     showLoading();
+    // 최종 안전장치: 40초가 지나도 로딩 중이면 멈춘 단계를 보여 줌
+    setTimeout(function(){
+      var st = document.getElementById('stage');
+      if (my === reqSeq && st) showError('날씨를 불러오지 못했어요. 새로고침을 눌러 주세요.\n(멈춘 단계: ' + (st.textContent || '시작') + ')');
+    }, 40000);
     var last = load(LS_KEY);
     if (!force && last && last.t && (Date.now() - last.t) < POS_TTL){
       $place.textContent = '현재 위치';
@@ -446,6 +456,7 @@
       $place.textContent = '위치 없음';
       return showError('이 브라우저는 위치 기능을 지원하지 않아요.');
     }
+    setStage('위치 확인 중');
     // 아이폰 홈 화면 앱에서 위치 응답이 아예 오지 않는 경우 대비: 8초 안에 응답 없으면 직접 넘어감
     var geoDone = false;
     var geoWatch = setTimeout(function(){

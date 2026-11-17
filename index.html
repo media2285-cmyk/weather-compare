@@ -415,11 +415,11 @@
     }
     function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
     // 최대 3번 시도 (제한 시간을 점점 늘림)
-    // 페이지를 막 새로 연 상태면 2번(10·15초), 아니면 1번(8초)만 시도하고 실패 시 페이지를 새로 엶
+    // 페이지를 막 새로 연 상태면 2번(10·15초), 아니면 1번(3초)만 시도하고 실패 시 페이지를 새로 엶
     var fresh = justReloaded();
     var p = fresh
       ? once(1, 10000).catch(function(){ return wait(1000).then(function(){ return once(2, 15000); }); })
-      : once(1, 8000);
+      : once(1, 3000);
     return p.catch(function(){
       if (!fresh && selfReload()) return new Promise(function(){}); // 새로 여는 중
       return probe().then(function(ok){
@@ -452,7 +452,7 @@
   }
 
   var reqSeq = 0; // 가장 최근 요청만 화면에 반영
-  var APP_VER = 'v261118a';
+  var APP_VER = 'v261118b';
 
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;

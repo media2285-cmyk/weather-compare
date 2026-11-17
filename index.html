@@ -391,30 +391,38 @@
       '&current=temperature_2m,weather_code,is_day' +
       '&daily=temperature_2m_max,temperature_2m_min,weather_code&hourly=temperature_2m,precipitation,precipitation_probability,snowfall,weather_code' +
       '&past_days=1&forecast_days=7&timezone=auto';
-    function once(n){
+    var log = [];
+    function once(n, limitMs){
       setStage('날씨 서버 요청 ' + n + '차');
+      var t0 = Date.now();
       var ctrl = ('AbortController' in window) ? new AbortController() : null;
-      var req = fetch(url, ctrl ? { signal: ctrl.signal, cache: 'no-store' } : { cache: 'no-store' }).then(function(r){
+      var u = url + '&_=' + t0; // 매번 새 요청으로 보이게
+      var req = fetch(u, ctrl ? { signal: ctrl.signal, cache: 'no-store' } : { cache: 'no-store' }).then(function(r){
         setStage('날씨 서버 응답 받음 (' + r.status + ')');
-        if (!r.ok) throw new Error('날씨 서버 응답 오류 (' + r.status + ')');
+        if (!r.ok) throw new Error('응답 오류 ' + r.status);
         return r.json();
       }, function(e){
-        throw new Error(e && e.name === 'AbortError' ? '응답 시간 초과' : '네트워크 연결 실패');
+        throw new Error(e && e.name === 'AbortError' ? '시간 초과' : '연결 실패');
       });
-      // 응답·데이터 읽기를 합쳐 12초가 지나면 무조건 실패 처리 (무한 로딩 방지)
+      // 응답·데이터 읽기를 합쳐 제한 시간이 지나면 실패 처리 (무한 로딩 방지)
       var limit = new Promise(function(_, rej){
-        setTimeout(function(){ if (ctrl) try { ctrl.abort(); } catch(e){} rej(new Error('응답 시간 초과')); }, 12000);
+        setTimeout(function(){ if (ctrl) try { ctrl.abort(); } catch(e){} rej(new Error('시간 초과')); }, limitMs);
       });
-      return Promise.race([req, limit]);
+      return Promise.race([req, limit]).catch(function(e){
+        log.push(n + '차 ' + e.message + ' ' + Math.round((Date.now() - t0) / 1000) + '초');
+        throw e;
+      });
     }
-    // 한 번 실패하면 1.5초 뒤 한 번 더 시도
-    return once(1).catch(function(){
-      return new Promise(function(res){ setTimeout(res, 1500); }).then(function(){ return once(2); });
-    });
+    function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+    // 최대 3번 시도 (제한 시간을 점점 늘림)
+    return once(1, 10000)
+      .catch(function(){ return wait(1000).then(function(){ return once(2, 15000); }); })
+      .catch(function(){ return wait(2000).then(function(){ return once(3, 20000); }); })
+      .catch(function(){ throw new Error(log.join(' · ')); });
   }
 
   var reqSeq = 0; // 가장 최근 요청만 화면에 반영
-  var APP_VER = 'v261117d';
+  var APP_VER = 'v261117e';
 
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;
@@ -424,7 +432,7 @@
       render(data);
     }).catch(function(e){
       if (my !== reqSeq) return;   // 이전 요청의 실패가 새 화면을 덮지 않게
-      showError('날씨를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.\n(' + e.message + ')');
+      showError('날씨를 불러오지 못했어요. 새로고침을 눌러 다시 시도해 주세요.\n(' + e.message + ')');
     });
   }
 
@@ -460,7 +468,7 @@
     setTimeout(function(){
       var st = document.getElementById('stage');
       if (my === reqSeq && st) showError('날씨를 불러오지 못했어요. 새로고침을 눌러 주세요.\n(멈춘 단계: ' + (st.textContent || '시작') + ')');
-    }, 40000);
+    }, 75000);
     var last = load(LS_KEY);
     if (!force && last && last.t && (Date.now() - last.t) < POS_TTL){
       $place.textContent = '현재 위치';
@@ -515,8 +523,12 @@
   // 다시 화면에 돌아왔을 때: 불러오는 중이 아니고 마지막 성공이 1분 넘었을 때만 새로 불러옴
   // (위치 허용 창이 뜨고 닫힐 때도 이 이벤트가 생겨서, 무조건 다시 시작하면 허용 응답을 놓침)
   document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'visible' && !loading && Date.now() - lastOkAt > 60000) start(false);
+    // 앱으로 돌아온 직후엔 아이폰 네트워크가 아직 준비 안 됐을 수 있어 잠깐 기다렸다 시작
+    if (document.visibilityState === 'visible' && !loading && Date.now() - lastOkAt > 60000)
+      setTimeout(function(){ if (!loading && document.visibilityState === 'visible') start(false); }, 800);
   });
+  // 네트워크가 다시 연결되면, 실패 화면일 때 자동으로 다시 시도
+  window.addEventListener('online', function(){ if (!loading && Date.now() - lastOkAt > 60000) start(false); });
   start(false);
 })();
 </script>

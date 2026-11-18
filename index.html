@@ -387,7 +387,7 @@
   }
 
   // 날씨 중계 서버(구글 Apps Script). 휴대폰에서 Open-Meteo 직접 연결이 멈출 때 대신 받아 옴
-  var PROXY_URL = '';
+  var PROXY_URL = 'https://script.google.com/macros/s/AKfycbxjBbqjvfiPwT9ZB2ejSxZzbtzopAvdF9EH6F-_YBEgwxH9jee3Q2IUOUEt1wQwXhxe/exec';
 
   function fetchWeather(lat, lon){
     var direct = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
@@ -465,7 +465,7 @@
   }
 
   var reqSeq = 0; // 가장 최근 요청만 화면에 반영
-  var APP_VER = 'v261118c';
+  var APP_VER = 'v261118d';
 
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;

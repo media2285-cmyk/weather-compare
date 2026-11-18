@@ -423,10 +423,10 @@
     var fresh = justReloaded();
     var p;
     if (PROXY_URL){
-      // 직접 연결 3초 → 안 되면 중계 서버로 (최대 15초)
+      // 중계 서버 먼저 (최대 10초) → 안 되면 직접 연결 (최대 6초)
       var proxied = PROXY_URL + '?lat=' + lat + '&lon=' + lon;
-      p = once('직접 연결', direct, fresh ? 6000 : 3000)
-        .catch(function(){ return once('중계 서버', proxied, 15000); });
+      p = once('중계 서버', proxied, fresh ? 15000 : 10000)
+        .catch(function(){ return once('직접 연결', direct, fresh ? 8000 : 6000); });
     } else {
       // 페이지를 막 새로 연 상태면 2번(10·15초), 아니면 1번(3초)만 시도
       p = fresh
@@ -465,7 +465,7 @@
   }
 
   var reqSeq = 0; // 가장 최근 요청만 화면에 반영
-  var APP_VER = 'v261118d';
+  var APP_VER = 'v261118e';
 
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;

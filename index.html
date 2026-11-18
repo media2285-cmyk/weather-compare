@@ -386,40 +386,53 @@
     $content.innerHTML = '<p class="msg">' + esc(msg).replace(/\n/g, '<br>') + '</p>';
   }
 
+  // 날씨 중계 서버(구글 Apps Script). 휴대폰에서 Open-Meteo 직접 연결이 멈출 때 대신 받아 옴
+  var PROXY_URL = '';
+
   function fetchWeather(lat, lon){
-    var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+    var direct = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
       '&current=temperature_2m,weather_code,is_day' +
       '&daily=temperature_2m_max,temperature_2m_min,weather_code&hourly=temperature_2m,precipitation,precipitation_probability,snowfall,weather_code' +
       '&past_days=1&forecast_days=7&timezone=auto';
     var log = [];
-    function once(n, limitMs){
-      setStage('날씨 서버 요청 ' + n + '차');
+    function once(name, url, limitMs){
+      setStage(name + ' 요청 중');
       var t0 = Date.now();
       var ctrl = ('AbortController' in window) ? new AbortController() : null;
-      var u = url + '&_=' + t0; // 매번 새 요청으로 보이게
-      var req = fetch(u, ctrl ? { signal: ctrl.signal, cache: 'no-store' } : { cache: 'no-store' }).then(function(r){
-        setStage('날씨 서버 응답 받음 (' + r.status + ')');
+      var u = url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + t0; // 매번 새 요청으로 보이게
+      var req = fetch(u, ctrl ? { signal: ctrl.signal } : {}).then(function(r){
+        setStage(name + ' 응답 받음 (' + r.status + ')');
         if (!r.ok) throw new Error('응답 오류 ' + r.status);
         return r.json();
       }, function(e){
         throw new Error(e && e.name === 'AbortError' ? '시간 초과' : '연결 실패');
+      }).then(function(j){
+        if (!j || j.error || !j.daily || !j.hourly) throw new Error('데이터 오류' + (j && j.reason ? ' (' + j.reason + ')' : ''));
+        return j;
       });
       // 응답·데이터 읽기를 합쳐 제한 시간이 지나면 실패 처리 (무한 로딩 방지)
       var limit = new Promise(function(_, rej){
         setTimeout(function(){ if (ctrl) try { ctrl.abort(); } catch(e){} rej(new Error('시간 초과')); }, limitMs);
       });
       return Promise.race([req, limit]).catch(function(e){
-        log.push(n + '차 ' + e.message + ' ' + Math.round((Date.now() - t0) / 1000) + '초');
+        log.push(name + ' ' + e.message + ' ' + Math.round((Date.now() - t0) / 1000) + '초');
         throw e;
       });
     }
     function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
-    // 최대 3번 시도 (제한 시간을 점점 늘림)
-    // 페이지를 막 새로 연 상태면 2번(10·15초), 아니면 1번(3초)만 시도하고 실패 시 페이지를 새로 엶
     var fresh = justReloaded();
-    var p = fresh
-      ? once(1, 10000).catch(function(){ return wait(1000).then(function(){ return once(2, 15000); }); })
-      : once(1, 3000);
+    var p;
+    if (PROXY_URL){
+      // 직접 연결 3초 → 안 되면 중계 서버로 (최대 15초)
+      var proxied = PROXY_URL + '?lat=' + lat + '&lon=' + lon;
+      p = once('직접 연결', direct, fresh ? 6000 : 3000)
+        .catch(function(){ return once('중계 서버', proxied, 15000); });
+    } else {
+      // 페이지를 막 새로 연 상태면 2번(10·15초), 아니면 1번(3초)만 시도
+      p = fresh
+        ? once('직접 연결 1차', direct, 10000).catch(function(){ return wait(1000).then(function(){ return once('직접 연결 2차', direct, 15000); }); })
+        : once('직접 연결', direct, 3000);
+    }
     return p.catch(function(){
       if (!fresh && selfReload()) return new Promise(function(){}); // 새로 여는 중
       return probe().then(function(ok){
@@ -452,7 +465,7 @@
   }
 
   var reqSeq = 0; // 가장 최근 요청만 화면에 반영
-  var APP_VER = 'v261118b';
+  var APP_VER = 'v261118c';
 
   function run(lat, lon){
     lat = Math.round(lat * 100) / 100; lon = Math.round(lon * 100) / 100;
